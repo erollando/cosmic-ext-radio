@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RadioWidget
+Comment=COSMIC panel applet for internet radio
+Exec=radiowidget
+Icon=io.github.xinia.RadioWidget-symbolic
+Terminal=false
+Categories=Audio;Player;
+X-CosmicApplet=true
+
