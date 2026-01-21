@@ -30,22 +30,6 @@ pub struct ControllerState {
     pub favorites: Vec<StationRef>,
 }
 
-impl ControllerState {
-    pub fn label_text(&self) -> String {
-        if let Some(st) = &self.station {
-            let name = st.name.trim();
-            if !name.is_empty() {
-                return name.to_string();
-            }
-        }
-
-        if let Some(t) = self.media_title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-            return t.to_string();
-        }
-
-        "radio".to_string()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum UiCommand {

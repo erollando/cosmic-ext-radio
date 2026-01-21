@@ -29,6 +29,8 @@ pub enum Message {
     TogglePause,
     Stop,
     Noop,
+    PlayCurrent,
+    ClearCurrent,
 }
 
 impl cosmic::Application for RadioWidget {
@@ -108,6 +110,16 @@ impl cosmic::Application for RadioWidget {
                     .send(UiCommand::Search(self.state.search_query.clone()));
                 Task::none()
             }
+            Message::PlayCurrent => {
+                if let Some(st) = &self.state.station {
+                    let _ = self.controller.cmd_tx.send(UiCommand::Play(st.clone()));
+                }
+                Task::none()
+            }
+            Message::ClearCurrent => {
+                let _ = self.controller.cmd_tx.send(UiCommand::Stop);
+                Task::none()
+            }            
             Message::PlayStation(s) => {
                 let _ = self.controller.cmd_tx.send(UiCommand::Play(s));
                 Task::none()
@@ -141,7 +153,7 @@ impl cosmic::Application for RadioWidget {
             .as_ref()
             .map(|s| s.name.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.state.label_text());
+            .unwrap_or_else(|| "Radio".to_string());
 
         // What we show in the panel:
         let is_horizontal = self.core.applet.is_horizontal();
@@ -240,15 +252,33 @@ impl RadioWidget {
             .on_input(Message::SearchInput)
             .on_submit(|_| Message::SearchSubmit);
             
+        let fav_star = if self.show_favorites { "★" } else { "☆" };
         let header = widget::row()
             .spacing(space_xxs)
             .push(search.width(Length::Fill))
-            .push(widget::button::text("★").on_press(Message::ToggleFavoritesView));
+            .push(widget::button::text(fav_star).on_press(Message::ToggleFavoritesView));
 
         let mut content = widget::column()
             .spacing(space_s)
             .padding(space_s)
             .push(header);
+
+        if self.state.phase == PlaybackPhase::Idle && self.state.station.is_some() {
+            let controls = widget::row()
+                .spacing(space_xxs)
+                .push(widget::button::text("Play").on_press(Message::PlayCurrent))
+                .push(widget::button::text("Clear").on_press(Message::ClearCurrent));
+            content = content.push(controls);
+        }
+
+        if matches!(self.state.phase, PlaybackPhase::Playing | PlaybackPhase::Paused) {
+            let pause_label = if self.state.phase == PlaybackPhase::Paused { "Resume" } else { "Pause" };
+            let controls = widget::row()
+                .spacing(space_xxs)
+                .push(widget::button::text(pause_label).on_press(Message::TogglePause))
+                .push(widget::button::text("Stop").on_press(Message::Stop));
+            content = content.push(controls);
+        }
 
         if matches!(self.state.phase, PlaybackPhase::Playing | PlaybackPhase::Paused) {
             let pause_label = if self.state.phase == PlaybackPhase::Paused {
