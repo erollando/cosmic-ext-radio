@@ -251,7 +251,7 @@ impl RadioWidget {
         let search = widget::search_input("Search stations…", &self.state.search_query)
             .on_input(Message::SearchInput)
             .on_submit(|_| Message::SearchSubmit);
-            
+
         let fav_star = if self.show_favorites { "★" } else { "☆" };
         let header = widget::row()
             .spacing(space_xxs)
@@ -263,6 +263,7 @@ impl RadioWidget {
             .padding(space_s)
             .push(header);
 
+        // Idle-with-station: explicit play/clear
         if self.state.phase == PlaybackPhase::Idle && self.state.station.is_some() {
             let controls = widget::row()
                 .spacing(space_xxs)
@@ -271,15 +272,7 @@ impl RadioWidget {
             content = content.push(controls);
         }
 
-        if matches!(self.state.phase, PlaybackPhase::Playing | PlaybackPhase::Paused) {
-            let pause_label = if self.state.phase == PlaybackPhase::Paused { "Resume" } else { "Pause" };
-            let controls = widget::row()
-                .spacing(space_xxs)
-                .push(widget::button::text(pause_label).on_press(Message::TogglePause))
-                .push(widget::button::text("Stop").on_press(Message::Stop));
-            content = content.push(controls);
-        }
-
+        // Playing/Paused: pause/stop (single block)
         if matches!(self.state.phase, PlaybackPhase::Playing | PlaybackPhase::Paused) {
             let pause_label = if self.state.phase == PlaybackPhase::Paused {
                 "Resume"
@@ -293,7 +286,10 @@ impl RadioWidget {
                 .push(widget::button::text("Stop").on_press(Message::Stop));
 
             content = content.push(controls);
-        } else if self.show_favorites {
+        }
+
+        // Main body (favorites vs search/results/errors)
+        if self.show_favorites {
             if self.state.favorites.is_empty() {
                 content = content.push(widget::text::body("No favorites yet."));
             } else {

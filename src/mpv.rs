@@ -100,20 +100,28 @@ async fn run_mpv(
 async fn spawn_and_connect(socket_path: &Path) -> Result<(Child, UnixStream)> {
     let _ = tokio::fs::remove_file(socket_path).await;
 
-    let mut child = Command::new("mpv")
-        .arg("--idle=yes")
-        .arg("--no-terminal")
-        .arg("--no-video")
-        .arg("--force-window=no")
-        .arg("--keep-open=yes")
-        .arg(format!(
-            "--input-ipc-server={}",
-            socket_path
-                .to_str()
-                .ok_or_else(|| anyhow!("Invalid socket path"))?
-        ))
-        .spawn()
-        .context("Failed to spawn mpv")?;
+    let mut child = unsafe {
+        Command::new("mpv")
+            .kill_on_drop(true)
+            .arg("--idle=yes")
+            .arg("--no-terminal")
+            .arg("--no-video")
+            .arg("--force-window=no")
+            .arg("--keep-open=yes")
+            .arg(format!(
+                "--input-ipc-server={}",
+                socket_path
+                    .to_str()
+                    .ok_or_else(|| anyhow!("Invalid socket path"))?
+            ))
+            .pre_exec(|| {
+                // kill mpv when the parent (applet) dies
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            })
+            .spawn()
+            .context("Failed to spawn mpv")?
+    };
 
     let start = tokio::time::Instant::now();
     let stream = loop {

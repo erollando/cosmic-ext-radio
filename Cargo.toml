@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+libc = "0.2"
 anyhow = "1"
 cosmic = { git = "https://github.com/pop-os/libcosmic", package = "libcosmic", features = ["applet", "tokio"] }
 futures-util = "0.3"
