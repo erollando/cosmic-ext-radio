@@ -11,11 +11,23 @@ COSMIC (Pop!_OS COSMIC) panel applet that plays internet radio via **mpv** and d
 
 ## Build
 
+You can build and install everything with:
+
 ```sh
-cargo build --release
+just install
 ```
 
+Or, to only build:
+
+```sh
+just build
+```
+
+This will build the project and install the binary, desktop entry, and icon in the correct locations for your user.
+
 ## Install (user-local)
+
+If you do not have `just`, you can still install manually:
 
 1. Install the binary:
 

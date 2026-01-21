@@ -45,6 +45,13 @@ impl MpvProcess {
     }
 }
 
+impl Drop for MpvProcess {
+    fn drop(&mut self) {
+        // Best effort. If the task is already gone, ignore.
+        let _ = self.cmd_tx.send(MpvCommand::Shutdown);
+    }
+}
+
 // mpv.rs
 async fn run_mpv(
     socket_path: PathBuf,
@@ -65,7 +72,11 @@ async fn run_mpv(
                 let _ = evt_tx.send(MpvEvent::Ready);
 
                 match io_loop(&mut child, stream, &mut cmd_rx, &evt_tx).await {
-                    Ok(()) => return,
+                    Ok(()) => {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        return;
+                    }
                     Err(e) => {
                         // IMPORTANT: don’t leak an mpv process
                         let _ = child.kill().await;
@@ -173,7 +184,12 @@ async fn io_loop(
                 }
             }
             cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else { return Ok(()); };
+                let Some(cmd) = cmd else {
+                    // App/controller dropped -> ensure mpv dies.
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    return Ok(());
+                };
                 match cmd {
                     MpvCommand::LoadUrl { url } => {
                         send_json_half(&mut write_half, mpv_cmd(vec![
