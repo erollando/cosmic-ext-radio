@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum MpvCommand {
     LoadUrl { url: String },
+    SetTitle(String),
     TogglePause,
     SetPause(bool),
     Stop,
@@ -44,25 +45,35 @@ impl MpvProcess {
     }
 }
 
+// mpv.rs
 async fn run_mpv(
     socket_path: PathBuf,
     mut cmd_rx: mpsc::UnboundedReceiver<MpvCommand>,
     evt_tx: mpsc::UnboundedSender<MpvEvent>,
 ) {
     let mut backoff = Duration::from_millis(200);
+
     loop {
         if cmd_rx.is_closed() {
             return;
         }
+
         match spawn_and_connect(&socket_path).await {
             Ok((mut child, mut stream)) => {
                 backoff = Duration::from_millis(200);
                 let _ = send_observers(&mut stream).await;
                 let _ = evt_tx.send(MpvEvent::Ready);
+
                 match io_loop(&mut child, stream, &mut cmd_rx, &evt_tx).await {
                     Ok(()) => return,
                     Err(e) => {
+                        // IMPORTANT: don’t leak an mpv process
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+
                         let _ = evt_tx.send(MpvEvent::Crashed(e.to_string()));
+                        tokio::time::sleep(backoff).await;
+                        backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
                     }
                 }
             }
@@ -111,20 +122,31 @@ async fn spawn_and_connect(socket_path: &Path) -> Result<(Child, UnixStream)> {
 }
 
 async fn send_observers(stream: &mut UnixStream) -> Result<()> {
-    send_json(stream, mpv_cmd(vec![
-        serde_json::json!("observe_property"),
-        serde_json::json!(1),
-        serde_json::json!("media-title"),
-    ]))
+    // media-title
+    send_json(
+        stream,
+        mpv_cmd(vec![
+            serde_json::json!("observe_property"),
+            serde_json::json!(1),
+            serde_json::json!("media-title"),
+        ]),
+    )
     .await?;
-    send_json(stream, mpv_cmd(vec![
-        serde_json::json!("observe_property"),
-        serde_json::json!(2),
-        serde_json::json!("pause"),
-    ]))
+
+    // pause
+    send_json(
+        stream,
+        mpv_cmd(vec![
+            serde_json::json!("observe_property"),
+            serde_json::json!(2),
+            serde_json::json!("pause"),
+        ]),
+    )
     .await?;
+
     Ok(())
 }
+
 
 async fn io_loop(
     child: &mut Child,
@@ -158,6 +180,13 @@ async fn io_loop(
                             serde_json::json!("loadfile"),
                             serde_json::json!(url),
                             serde_json::json!("replace"),
+                        ])).await?;
+                    }
+                    MpvCommand::SetTitle(title) => {
+                        send_json_half(&mut write_half, mpv_cmd(vec![
+                            serde_json::json!("set_property"),
+                            serde_json::json!("force-media-title"),
+                            serde_json::json!(title),
                         ])).await?;
                     }
                     MpvCommand::TogglePause => {

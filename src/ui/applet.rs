@@ -1,4 +1,4 @@
-use crate::controller::{start_controller, PlaybackPhase, UiCommand};
+use crate::controller::{start_controller, UiCommand, PlaybackPhase};
 use crate::models::{Station, StationRef};
 use cosmic::app::{Core, Task};
 use cosmic::iced::{Length, Rectangle};
@@ -13,6 +13,7 @@ pub struct RadioWidget {
     controller: crate::controller::ControllerHandle,
     state: crate::controller::ControllerState,
     popup: Option<cosmic::iced::window::Id>,
+    show_favorites: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -23,9 +24,10 @@ pub enum Message {
     SearchInput(String),
     SearchSubmit,
     PlayStation(StationRef),
+    ToggleFavorite(StationRef),
+    ToggleFavoritesView,
     TogglePause,
     Stop,
-    ToggleFavorite(StationRef),
     Noop,
 }
 
@@ -52,6 +54,7 @@ impl cosmic::Application for RadioWidget {
                 controller,
                 state,
                 popup: None,
+                show_favorites: false,
             },
             Task::none(),
         )
@@ -109,6 +112,14 @@ impl cosmic::Application for RadioWidget {
                 let _ = self.controller.cmd_tx.send(UiCommand::Play(s));
                 Task::none()
             }
+            Message::ToggleFavorite(s) => {
+                let _ = self.controller.cmd_tx.send(UiCommand::ToggleFavorite(s));
+                Task::none()
+            }
+            Message::ToggleFavoritesView => {
+                self.show_favorites = !self.show_favorites;
+                Task::none()
+            }
             Message::TogglePause => {
                 let _ = self.controller.cmd_tx.send(UiCommand::TogglePause);
                 Task::none()
@@ -116,11 +127,7 @@ impl cosmic::Application for RadioWidget {
             Message::Stop => {
                 let _ = self.controller.cmd_tx.send(UiCommand::Stop);
                 Task::none()
-            }
-            Message::ToggleFavorite(s) => {
-                let _ = self.controller.cmd_tx.send(UiCommand::ToggleFavorite(s));
-                Task::none()
-            }
+            }            
             Message::Noop => Task::none(),
         }
     }
@@ -128,59 +135,77 @@ impl cosmic::Application for RadioWidget {
     fn view(&self) -> cosmic::Element<'_, Message> {
         let have_popup = self.popup;
 
-        let full_label = self.state.label_text();
-        let label = ellipsize_chars(&full_label, 30);
+        let tooltip_text = self
+            .state
+            .station
+            .as_ref()
+            .map(|s| s.name.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.state.label_text());
 
-        let btn = self
-            .core
-            .applet
-            .text_button(
+        // What we show in the panel:
+        let is_horizontal = self.core.applet.is_horizontal();
+
+        let btn = (if is_horizontal {
+            let label = ellipsize_chars(&tooltip_text, 30);
+
+            self.core.applet.text_button(
                 widget::text::body(label).width(Length::Fixed(240.0)),
                 Message::Noop,
             )
             .width(Length::Fixed(240.0))
-            .on_press_with_rectangle(move |offset, bounds| {
-                if let Some(id) = have_popup {
-                    Message::Surface(destroy_popup(id))
-                } else {
-                    Message::Surface(app_popup::<RadioWidget>(
-                        move |state: &mut RadioWidget| {
-                            let new_id = cosmic::iced::window::Id::unique();
-                            state.popup = Some(new_id);
-                            let mut popup_settings = state.core.applet.get_popup_settings(
-                                state.core.main_window_id().unwrap(),
-                                new_id,
-                                None,
-                                None,
-                                None,
-                            );
+        } else {
+            // Vertical panels: keep it compact.
+            self.core.applet.icon_button("audio-x-generic-symbolic")
+            // If icon doesn't show, fallback to short text:
+            // self.core.applet.text_button(widget::text::body("RAD"), Message::Noop)
+        })
+        .on_press_with_rectangle(move |offset, bounds| {
+            if let Some(id) = have_popup {
+                Message::Surface(destroy_popup(id))
+            } else {
+                Message::Surface(app_popup::<RadioWidget>(
+                    move |state: &mut RadioWidget| {
+                        let new_id = cosmic::iced::window::Id::unique();
+                        state.popup = Some(new_id);
+                        let mut popup_settings = state.core.applet.get_popup_settings(
+                            state.core.main_window_id().unwrap(),
+                            new_id,
+                            None,
+                            None,
+                            None,
+                        );
 
-                            popup_settings.positioner.anchor_rect = Rectangle {
-                                x: (bounds.x - offset.x) as i32,
-                                y: (bounds.y - offset.y) as i32,
-                                width: bounds.width as i32,
-                                height: bounds.height as i32,
-                            };
+                        popup_settings.positioner.anchor_rect = Rectangle {
+                            x: (bounds.x - offset.x) as i32,
+                            y: (bounds.y - offset.y) as i32,
+                            width: bounds.width as i32,
+                            height: bounds.height as i32,
+                        };
 
-                            popup_settings
-                        },
-                        Some(Box::new(|state: &RadioWidget| {
-                            state.popup_content().map(cosmic::Action::App)
-                        })),
-                    ))
-                }
-            });
+                        popup_settings
+                    },
+                    Some(Box::new(|state: &RadioWidget| {
+                        state.popup_content().map(cosmic::Action::App)
+                    })),
+                ))
+            }
+        });
 
-        // IMPORTANT: move an owned String into the tooltip (no &full_label)
         let with_tooltip = self.core.applet.applet_tooltip::<Message>(
             btn,
-            full_label, // <-- owned String, not a reference
+            tooltip_text,
             self.popup.is_some(),
             Message::Surface,
             None,
         );
 
-        self.core.applet.autosize_window(with_tooltip).into()
+        // Only autosize when horizontal (vertical should stay compact)
+        if is_horizontal {
+            self.core.applet.autosize_window(with_tooltip).into()
+        } else {
+            with_tooltip.into()
+        }
     }
 
     fn view_window(&self, _id: cosmic::iced::window::Id) -> cosmic::Element<'_, Message> {
@@ -214,11 +239,16 @@ impl RadioWidget {
         let search = widget::search_input("Search stations…", &self.state.search_query)
             .on_input(Message::SearchInput)
             .on_submit(|_| Message::SearchSubmit);
+            
+        let header = widget::row()
+            .spacing(space_xxs)
+            .push(search.width(Length::Fill))
+            .push(widget::button::text("★").on_press(Message::ToggleFavoritesView));
 
         let mut content = widget::column()
             .spacing(space_s)
             .padding(space_s)
-            .push(search);
+            .push(header);
 
         if matches!(self.state.phase, PlaybackPhase::Playing | PlaybackPhase::Paused) {
             let pause_label = if self.state.phase == PlaybackPhase::Paused {
@@ -226,14 +256,20 @@ impl RadioWidget {
             } else {
                 "Pause"
             };
+
             let controls = widget::row()
                 .spacing(space_xxs)
                 .push(widget::button::text(pause_label).on_press(Message::TogglePause))
                 .push(widget::button::text("Stop").on_press(Message::Stop));
-            content = content.push(controls);
-        }
 
-        if let Some(err) = &self.state.error {
+            content = content.push(controls);
+        } else if self.show_favorites {
+            if self.state.favorites.is_empty() {
+                content = content.push(widget::text::body("No favorites yet."));
+            } else {
+                content = content.push(self.favorites_list(&self.state.favorites));
+            }
+        } else if let Some(err) = &self.state.error {
             content = content.push(widget::text::body(err));
         } else if self.state.search_loading {
             content = content.push(widget::text::body("Loading…"));
@@ -281,6 +317,28 @@ impl RadioWidget {
 
         let scroll =
             cosmic::iced_widget::scrollable(list.into_element()).height(Length::Fixed(300.0));
+        scroll.into()
+    }
+
+    fn favorites_list<'a>(&'a self, favorites: &'a [StationRef]) -> cosmic::Element<'a, Message> {
+        let mut list = widget::list_column().padding(0).spacing(0);
+        for s in favorites {
+            let fav_text = "★";
+            let item = widget::row()
+                .spacing(8)
+                .push(
+                    widget::button::custom(
+                        widget::column()
+                            .spacing(2)
+                            .push(widget::text::body(&s.name)),
+                    )
+                    .on_press(Message::PlayStation(s.clone()))
+                    .width(Length::Fill),
+                )
+                .push(widget::button::text(fav_text).on_press(Message::ToggleFavorite(s.clone())));
+            list = list.add(item);
+        }
+        let scroll = cosmic::iced_widget::scrollable(list.into_element()).height(Length::Fixed(300.0));
         scroll.into()
     }
 }

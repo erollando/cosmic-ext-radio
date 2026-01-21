@@ -32,14 +32,17 @@ pub struct ControllerState {
 
 impl ControllerState {
     pub fn label_text(&self) -> String {
-        if let Some(t) = self.media_title.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            return t.to_string();
-        }
-        if let Some(s) = &self.station {
-            if !s.name.trim().is_empty() {
-                return s.name.clone();
+        if let Some(st) = &self.station {
+            let name = st.name.trim();
+            if !name.is_empty() {
+                return name.to_string();
             }
         }
+
+        if let Some(t) = self.media_title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            return t.to_string();
+        }
+
         "radio".to_string()
     }
 }
@@ -155,7 +158,7 @@ async fn controller_main(
                         state.phase = PlaybackPhase::Idle;
                         want_paused = false;
                         let _ = state_tx.send(state.clone());
-
+                        let _ = mpv.command(MpvCommand::SetTitle(station.name.clone()));
                         let rb = rb.clone();
                         let tx = internal_tx.clone();
                         tokio::spawn(async move {
@@ -173,12 +176,26 @@ async fn controller_main(
                     UiCommand::Stop => {
                         state.error = None;
                         let _ = mpv.command(MpvCommand::Stop);
+                        let _ = mpv.command(MpvCommand::SetTitle(String::new()));
+
                         current_url = None;
                         want_paused = false;
-                        state.phase = if state.station.is_some() { PlaybackPhase::Idle } else { PlaybackPhase::NotConfigured };
+
+                        // Stop forgets the current station
+                        state.station = None;
                         state.media_title = None;
+                        state.phase = PlaybackPhase::NotConfigured;
+
                         let _ = state_tx.send(state.clone());
+
+                        // Clear persisted last station too
+                        config.last_station = None;
+                        let cfg = config.clone();
+                        tokio::spawn(async move {
+                            let _ = tokio::task::spawn_blocking(move || cfg.save_atomic()).await;
+                        });
                     }
+
                     UiCommand::ToggleFavorite(station) => {
                         config.toggle_favorite(station);
                         state.favorites = config.favorites.clone();
