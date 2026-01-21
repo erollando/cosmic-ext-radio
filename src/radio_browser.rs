@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use rand::seq::SliceRandom;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use serde::Deserialize;
 use std::time::Duration;
 use url::Url;
 
@@ -69,15 +70,18 @@ impl RadioBrowserClient {
             let mut url = Url::parse(&format!("{base}/json/stations/search"))
                 .context("Invalid Radio Browser base URL")?;
             url.query_pairs_mut()
-                .append_pair("name", &query)
+                .append_pair("name", &urlencoding::encode(&query))
                 .append_pair("hidebroken", "true")
                 .append_pair("limit", &limit.to_string())
                 .append_pair("order", "votes")
                 .append_pair("reverse", "true");
+            eprintln!("[RadioWidget][search] GET {}", url);
             let resp = http.get(url).send().await?;
+            eprintln!("[RadioWidget][search] Response: status = {}", resp.status());
             let bytes = read_limited(resp, MAX_BODY_BYTES).await?;
             let stations: Vec<Station> =
                 serde_json::from_slice(&bytes).context("Invalid stations search response")?;
+            eprintln!("[RadioWidget][search] Got {} stations", stations.len());
             Ok(stations)
             }
         })
@@ -97,17 +101,25 @@ impl RadioBrowserClient {
             let stationuuid = stationuuid.clone();
             async move {
             let url = format!("{base}/json/url/{stationuuid}");
+            eprintln!("[RadioWidget][resolve] GET {}", url);
             let resp = http.get(url).send().await?;
-
+            eprintln!("[RadioWidget][resolve] Response: status = {}", resp.status());
             if resp.status().is_redirection() {
                 if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
                     let loc = loc.to_str().context("Invalid redirect Location header")?;
+                    eprintln!("[RadioWidget][resolve] Redirected to {}", loc);
                     return parse_stream_url(loc);
                 }
             }
-
             let bytes = read_limited(resp, 64 * 1024).await?;
             let text = String::from_utf8_lossy(&bytes);
+            eprintln!("[RadioWidget][resolve] Body: {}", &text);
+            // Try to parse as JSON and extract the url field
+            if let Ok(json) = serde_json::from_str::<UrlResponse>(&text) {
+                eprintln!("[RadioWidget][resolve] Extracted stream URL: {}", json.url);
+                return parse_stream_url(&json.url);
+            }
+            // fallback: try to parse as plain URL
             parse_stream_url(text.trim())
             }
         })
@@ -151,6 +163,11 @@ impl RadioBrowserClient {
 
         Err(last_err.unwrap_or_else(|| anyhow!("{action} failed")))
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct UrlResponse {
+    url: String,
 }
 
 fn parse_stream_url(s: &str) -> Result<Url> {

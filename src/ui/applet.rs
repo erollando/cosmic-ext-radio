@@ -127,12 +127,18 @@ impl cosmic::Application for RadioWidget {
 
     fn view(&self) -> cosmic::Element<'_, Message> {
         let have_popup = self.popup;
-        let label = self.state.label_text();
+
+        let full_label = self.state.label_text();
+        let label = ellipsize_chars(&full_label, 30);
 
         let btn = self
             .core
             .applet
-            .text_button(widget::text::body(label), Message::Noop)
+            .text_button(
+                widget::text::body(label).width(Length::Fixed(240.0)),
+                Message::Noop,
+            )
+            .width(Length::Fixed(240.0))
             .on_press_with_rectangle(move |offset, bounds| {
                 if let Some(id) = have_popup {
                     Message::Surface(destroy_popup(id))
@@ -165,13 +171,16 @@ impl cosmic::Application for RadioWidget {
                 }
             });
 
-        cosmic::Element::from(self.core.applet.applet_tooltip::<Message>(
+        // IMPORTANT: move an owned String into the tooltip (no &full_label)
+        let with_tooltip = self.core.applet.applet_tooltip::<Message>(
             btn,
-            "RadioWidget",
+            full_label, // <-- owned String, not a reference
             self.popup.is_some(),
             Message::Surface,
             None,
-        ))
+        );
+
+        self.core.applet.autosize_window(with_tooltip).into()
     }
 
     fn view_window(&self, _id: cosmic::iced::window::Id) -> cosmic::Element<'_, Message> {
@@ -180,6 +189,17 @@ impl cosmic::Application for RadioWidget {
 
     fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
         Some(cosmic::applet::style())
+    }
+}
+
+// Simple char-based ellipsis
+fn ellipsize_chars(s: &str, max_chars: usize) -> String {
+    let mut it = s.chars();
+    let taken: String = it.by_ref().take(max_chars).collect();
+    if it.next().is_some() {
+        format!("{taken}…")
+    } else {
+        taken
     }
 }
 
@@ -259,7 +279,8 @@ impl RadioWidget {
             list = list.add(item);
         }
 
-        let scroll = cosmic::iced_widget::scrollable(list.into_element()).height(Length::Fixed(300.0));
+        let scroll =
+            cosmic::iced_widget::scrollable(list.into_element()).height(Length::Fixed(300.0));
         scroll.into()
     }
 }
